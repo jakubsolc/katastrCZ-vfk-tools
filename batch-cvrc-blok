@@ -1,0 +1,17 @@
+-bu 6/1 1   -bulist_push
+-bu 7/1 1   -bulist_push
+-bu 5   1   -bulist_push
+
+-parcel_coord 6/1    1  -bdlist_push
+-parcel_coord 284    0  -bdlist_push
+-parcel_coord 13/1   0  -bdlist_push
+-parcel_coord 7/1    1  -bdlist_push
+-parcel_coord 5      1  -bdlist_push
+-parcel_coord 23/2   0  -bdlist_push
+
+-parcel_coord 276    0  -bdlist_push
+-parcel_coord 12/1   0  -bdlist_push
+
+-matlab_export
+
+-end_batch

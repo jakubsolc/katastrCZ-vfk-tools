@@ -1,0 +1,33 @@
+-bu 6/1 1   -bulist_push
+-bu 7/1 1   -bulist_push
+-bu 5   1   -bulist_push
+-bu 11  1   -bulist_push
+
+-parcel_coord 6/1    1  -bdlist_push
+-parcel_coord 284    0  -bdlist_push
+-parcel_coord 13/1   0  -bdlist_push
+-parcel_coord 7/1    1  -bdlist_push
+-parcel_coord 5      1  -bdlist_push
+-parcel_coord 2/1    0  -bdlist_push
+-parcel_coord 2/2    0  -bdlist_push
+-parcel_coord 2/3    0  -bdlist_push
+-parcel_coord 2/4    0  -bdlist_push
+-parcel_coord 23/2   0  -bdlist_push
+-parcel_coord 23/3   0  -bdlist_push
+-parcel_coord 23/6   0  -bdlist_push
+-parcel_coord 178/4  0  -bdlist_push
+-parcel_coord 11     1  -bdlist_push
+-parcel_coord 4/11   0  -bdlist_push
+-parcel_coord 4/10   0  -bdlist_push
+-parcel_coord 276    0  -bdlist_push
+-parcel_coord 12/1   0  -bdlist_push
+
+-matlab_export
+
+-run_octave
+
+-end_batch
+
+-bu 8 	1   -bulist_push
+-parcel_coord 8   1  -bdlist_push
+-load_rect 1036251.00  w1036311.00 728191.00  72839x1.00

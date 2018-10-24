@@ -1,0 +1,13 @@
+-bu 5 1 -bulist_push 
+
+-parcel_coord 5 1 -bdlist_push -bbox_compute -bbox_expand 50 30 -bbox_save 2
+
+-parcel_select_in_bbox 
+
+-matlab_export
+
+-run_octave
+
+-end_batch
+
+

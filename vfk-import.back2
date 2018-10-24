@@ -1,0 +1,758 @@
+
+
+#include "vfk-headers.h"
+
+#include<string.h>      //strcpy
+
+// // g++ my_xpath_select.cpp pugixml.cpp -o z
+// // ./z -quiet -addpc 284 -addpc "13/1" -addpc "st. 6/1" -expoo -status > exkuk.m
+// // ./z -quiet -ku 618225.xml -addlist "st. 31/1" "st. 32" 526 525 456/8 "st. 28/2" 456/11 528 "st. 65" 456/5 456/9 "st. 33" "st. 34" 11/3 11/4 -expoo > plancach.m
+
+
+//  VFK importer pro SOBR, ?SPOl, ...
+
+//  potrebuji nacist SOBR, SPOL, SBP, HP, OP
+
+//  hlavni objekty:  tabulka obrazu bodu s pevnym poradim sloupcu
+
+
+/*  NEUTOPIT SE VE SNAZE O ROBUSTNOST. PROMENNE PORADI V TABULKACH A PROMENNE FORMATY SLOUPCU JSOU AKADEMICKY PROBLEM,
+ *  KTERY MOZNA ANI NEEXISTUJE. STACI OTESTOVAT SHODNOST FORMATOVEHO RADKU.
+ */
+
+//#include "pugixml.hpp"
+
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+void CBoundarySegment::swap_order()
+{
+                std::swap(X1, X2);
+                std::swap(Y1, Y2);
+                std::swap(KODCH1, KODCH2);
+                std::swap(CISLO1, CISLO2);
+}
+
+
+
+
+
+// stavebni: st=1, pozemkova: st=0,
+// vraci idx parcely v OP
+// not found == -1
+// pozor, v katastru jsou vsechna cisla v uvozovkach, tj. hledat "\"284\""
+TYP_idx TOP::find_parcela(std::string s, int st)
+{
+    int k=0; 
+    int kod = st ? 28 : 18;
+    while(k<data.size())
+    {
+        if (data[k].TEXT == s && data[k].TYPPPD_KOD==kod) break; //
+//        std::cout << data[k].TEXT << '\n';
+        k++;
+    }
+    
+    if (k==data.size()) return -1;
+    else return k;
+}
+
+//find first
+std::string TOP::get_parcela_name(TYP_id pc, int &idx, int &typ)
+{
+    int k=0; 
+    while(k<data.size())
+    {
+        if (data[k].PAR_ID == pc) break;
+        k++;
+    }
+    
+    idx = k;
+    if (k==data.size()) return "NULL";
+    else 
+    {
+        typ = data[k].TYPPPD_KOD;
+        return data[k].TEXT;
+    }
+}
+
+
+//stavebni: st=1
+//returns count of found
+// pozor, v katastru jsou vsechna cisla v uvozovkach, tj. hledat "\"284\""
+int TDatabase::find_parcela_neighbors(std::string s, int st, VEC_idx &indi_hp, VEC_idx &indi_op, VEC_id &par_ids, VEC_s &par_cisla, VEC_idx &typppd)
+{
+    indi_hp.clear();
+    indi_op.clear();
+    par_ids.clear();
+    par_cisla.clear();
+    int pc_idx = p_op->find_parcela(s, st);    
+//    std::cout << "DEB Neighbor pc_idx=: " << pc_idx << "\n";
+    if (pc_idx == -1) return 0;
+    TYP_id pc_id = p_op->data[pc_idx].PAR_ID;
+    
+//    std::cout << "DEB Neighbor pc_id=: " << pc_id << "\n";
+
+    int res;
+    
+    res = p_hp -> find_par_id(pc_id, indi_hp, par_ids);
+
+//    std::cout << "DEB Neighbor hp_res=: " << res << "\n";
+    
+    int neigh_pc_idx;
+    int neigh_pc_typ;
+    for(int k=0; k<res; k++)
+    {
+        par_cisla.push_back(p_op -> get_parcela_name(par_ids[k], neigh_pc_idx, neigh_pc_typ));        
+        indi_op.push_back(neigh_pc_idx);                
+        typppd.push_back(neigh_pc_typ);                
+ //       std::cout << "DEB Neighbor parids=: " <<  par_ids[k] << "  op_idx=" << neigh_pc_idx << "  " << par_cisla.back() << "\n";
+    }
+
+    
+    int kk = indi_op.size();
+    while(kk-- > 0)
+    {
+       if (typppd[kk] != 18 && typppd[kk] != 28)         // nechame jen pozemk a stav parcely
+       {
+           typppd.erase(typppd.begin()+kk);
+           indi_op.erase(indi_op.begin()+kk);
+           par_cisla.erase(par_cisla.begin()+kk);
+       }
+    }
+
+//    std::cout << "DEB Uniquize: orig=" << res << "\n";
+    res = p_op -> uniquize_list(par_cisla, indi_op, typppd);
+//    std::cout << "DEB Uniquize: orig=" << res << "\n";
+    
+    return res;
+}
+
+
+
+//int TDatabase::find_parcela_neighbors(std::string s, int st, VEC_idx &indi_hp, VEC_idx &indi_op, VEC_id &par_ids, VEC_s &par_cisla, VEC_idx &typppd)
+
+
+
+
+void BoundaryList::cyclize()
+{
+    for(int k = 1; k < (*this).size(); ++k)           // start from 1, compare with previous
+                                                      // the last one k is also important due to swap_order
+    {
+        int m = k;
+        while(m < (*this).size())
+        {
+                                                    // [k-1].2 connects to m[2]          
+            if ((*this)[k-1].CISLO2 == (*this)[m].CISLO2)   
+                                                                // muzem porovnat pres cislo bodu,  [ nebo pres SOBR.ID, ale to je zavislost navic, a taky muze byt bod ze SPOL ]          
+                                                                // predpokladame tedy existujici a unikatni cisla bodu
+                                                                // neunikatnost nezpusobi chybu, ale nedosahne se vysledku - leda porovnat primo XY
+            {
+                (*this)[m].swap_order();
+            }
+
+                                                    // [k-1].2 connects to m[1] 
+            if ((*this)[k-1].CISLO2 == (*this)[m].CISLO1)   
+            {
+                //swap
+                if (k != m) std::swap((*this)[k], (*this)[m]);
+                break;
+            }
+            m++;
+        }
+    }
+}
+
+
+
+void CBoundarySegment::pr() const
+{
+    std::cout << std::setw(8) << std::right << CISLO1 << "  " << X1 << "   " << Y1 << "   " << KODCH1 << "   " << std::setw(8) << std::right << CISLO2 << "  " << X2 << "   " << Y2 << "   " << KODCH2 
+                << "   " << PAR_ID_1 << "   " << PAR_ID_2 << "   " << HP_ID << "   " << PARAM << "\n";
+}
+
+void CBoundarySegment::prnxy() const
+{
+    std::cout << std::setw(8) << std::right << CISLO1 << "  " << Y1 << "   " << X1 << '\n';
+}
+
+void BoundaryList::mprint(std::string A) const
+{
+    std::cout << A << " = [ %%%%%%%%%%%%%%%%%%%%%%%%%%%\n";
+    for (int k = 0; k < (*this).size(); k++)
+        (*this)[k].prnxy();
+    (*this)[0].prnxy();         //...cycle
+    
+    std::cout << "]; \n";
+    std::cout << "plot(-"<<A<<"(:,2), -"<<A<<"(:,3), 'linewidth', 2); \n";
+    std::cout << "daspect([1 1 1]);\nhold on;\nfsz=10;";
+    std::cout << "for (k=1:(size("<<A<<",1)-1)), text(-"<<A<<"(k,2), -"<<A<<"(k,3), sprintf('%3d',"<<A<<"(k,1)), 'fontsize',fsz); end\n";
+    std::cout << "%%yticks = get (gca, 'ytick');\n"
+    "%%ylabels = arrayfun (@(x) sprintf ('%.0f', x), yticks, 'uniformoutput', false);\n"
+    "%%set (gca, 'yticklabel', ylabels)\n";
+
+    std::cout << "%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%\n";
+    
+}
+
+// vzhledem k tomu, ze neindexuji primarni klice pro vyhledavani, 
+// je potreba vzdy rojit celou tabulku.
+// to znamena, ze vyhledani primeho odkazu je stejne efektivni, jako zpetne hledani, lookup je vzdycky
+//
+// A: lookup OP("6/1"): najdu parid
+// B: lookup HP(parid): najdu seznam hranice hplist
+// C: lookup SBP(exists in hplist): najdu seznam segmentu Li
+// D: lookup SOBR(forall Li)
+
+int TDatabase::parcela_coord(std::string s, int st, BoundaryList &L)
+{
+    L.clear();
+    int res;
+    TYP_idx op_idx = p_op->find_parcela(s, st);    
+    if (op_idx<0) return 0;
+    TYP_id  op_id  = p_op->data[op_idx].PAR_ID;
+
+    VEC_idx indi_hp;
+    VEC_id  par_ids;
+    res = p_hp -> find_par_id(op_id, indi_hp, par_ids);
+    std::cout << "B: res=" << res << "\n";
+
+    VEC_id hp_ids;
+    for(auto it = indi_hp.begin(); it != indi_hp.end(); ++it) hp_ids.push_back(p_hp -> data[*it].ID);
+
+    // krok C       lookup SBP(exists in hplist): najdu seznam segmentu Li
+    
+    VEC_idx  sbp_idx;
+    VEC_idx  sbp_12;
+    VEC_id   sbp_XY_ids;
+    VEC_idx  whathp_idx;
+    res = p_sbp -> find_sources_of_hplist(hp_ids, sbp_idx, sbp_12, sbp_XY_ids, whathp_idx);
+    
+    std::cout << "C: res=" << res << "\n";
+
+    // krok D        lookup SOBR(forall Li)
+    VEC_idx body_idx;
+    for(int k = 0; k < sbp_idx.size(); ++k) 
+    {
+        int bod_idx;
+        bod_idx = p_sobr -> find_point_by_id(sbp_XY_ids[k]);
+            
+        if (bod_idx >= 0) body_idx.push_back(bod_idx);
+        else return 0;
+        
+        std::cout << "X " << p_sobr -> data[bod_idx].ID <<  "     " << p_sobr -> data[bod_idx].UPLNE_CISLO << "  " << p_sbp -> data[sbp_idx[k]].PORADOVE_CISLO_BODU << "  " << whathp_idx[k] 
+                  << "    " << p_sobr -> data[bod_idx].SOURADNICE_X << "    " << p_sobr -> data[bod_idx].SOURADNICE_Y << "\n";
+
+    }
+    
+    // krok E - slozeni
+    L.resize(hp_ids.size());
+    for(int k = 0; k < indi_hp.size(); ++k) 
+    {
+        L[k].HP_ID  = hp_ids[k];
+        L[k].PAR_ID_1  = p_hp -> data[indi_hp[k]].PAR_ID_1;
+        L[k].PAR_ID_2  = p_hp -> data[indi_hp[k]].PAR_ID_2;
+    }
+
+
+    for(int k = 0; k < sbp_idx.size(); ++k) 
+    {
+        if (p_sbp -> data[sbp_idx[k]].PORADOVE_CISLO_BODU == 1)
+        {
+            L[whathp_idx[k]].X1  = p_sobr -> data[body_idx[k]].SOURADNICE_X;
+            L[whathp_idx[k]].Y1  = p_sobr -> data[body_idx[k]].SOURADNICE_Y;
+            L[whathp_idx[k]].CISLO1  = p_sobr -> data[body_idx[k]].CISLO_BODU;
+            L[whathp_idx[k]].KODCH1  = p_sobr -> data[body_idx[k]].KOD_CHB;
+            //TODO kodchar
+        }
+        else if (p_sbp -> data[sbp_idx[k]].PORADOVE_CISLO_BODU == 2)
+        {
+            L[whathp_idx[k]].X2  = p_sobr -> data[body_idx[k]].SOURADNICE_X;
+            L[whathp_idx[k]].Y2  = p_sobr -> data[body_idx[k]].SOURADNICE_Y;
+            L[whathp_idx[k]].CISLO2  = p_sobr -> data[body_idx[k]].CISLO_BODU;
+            L[whathp_idx[k]].KODCH2  = p_sobr -> data[body_idx[k]].KOD_CHB;
+        } else std::cout << "COORD: Chyba dichotomie.\n";
+
+        
+    }
+    
+    
+    L.cyclize();
+    
+}
+    
+int TSBP::find_sources_of_hplist(VEC_id hp_ids, VEC_idx &sbp_idx, VEC_idx &sbp_12, VEC_id &sbp_XY_id, VEC_idx &whathp_idx)
+{
+    int res=0;
+    
+    for(int k=0; k < data.size(); k++)
+    {
+        for(int hh=0; hh < hp_ids.size(); hh++)
+        {
+            if (data[k].HP_ID == hp_ids[hh])
+            {
+                sbp_idx.push_back(k);           // nekolik(dva) sbp ukazuje na stejne hp, 
+                whathp_idx.push_back(hh);
+                sbp_12.push_back(data[k].PORADOVE_CISLO_BODU);
+                sbp_XY_id.push_back(data[k].BP_ID);      
+                res++;
+            }
+        }
+    }
+    
+    return res;
+}
+
+void TDatabase::print_parcela_coord(const BoundaryList L) const
+{
+        std::cout << "--------------- P A R C    C O O R D   (BOUNDARY)  -------------------------\n";
+        for(auto it = L.begin(); it != L.end(); ++it)
+        {
+            it->pr();
+        }
+}
+
+    
+
+void TOP::print_neighbors(const VEC_idx indi_op, const VEC_id par_ids, const VEC_s par_cisla, const VEC_idx par_typppd)
+{
+             std::cout << "-----------------  Neighbors results:  ----------------\n";
+
+              
+
+              for (int k=0; k<indi_op.size(); k++) data[indi_op[k]].pr();
+
+              int kk = indi_op.size();
+              for (int k=0; k<indi_op.size(); k++) 
+                  std::cout << k << ":\t " << "  | " << std::setw(6) << indi_op[k] << "\t| " << par_ids[k] << "\t| " << std::setw(8) << std::right << par_cisla[k] << " " << par_typppd[k] << "\n";
+
+              for (int k=0; k < indi_op.size(); k++)
+                std::cout << par_cisla[k] << ":" << par_typppd[k] <<"  ";
+              std::cout << "\n";
+
+}
+
+
+
+class Runtime
+{
+public:
+    std::vector<char**> v_argv;
+    std::vector<int> v_argc;
+    std::vector<int> v_i;
+    
+};
+
+int prepare_argv(const char fn[], int &count, char ** &newargv)
+{
+    std::ifstream in (fn);
+    if (!in.good())
+    {
+        std::cout << "Error opening batch file '" << fn <<"'\n";
+        return 1;
+    }
+    
+    std::vector<std::string> vss;
+    count = 0;
+    newargv = NULL;
+    while(1)
+    {
+        std::string ss;
+        in >> ss;
+        if (!in.good() || in.eof()) break;
+        vss.push_back(ss);
+        count++;
+    }
+    
+    newargv = new char* [vss.size()+1];
+        
+    for (int k=0; k < vss.size(); k++)
+    {
+        newargv[k] = new char[vss[k].length()+1];
+        strcpy(newargv[k], vss[k].c_str());
+    }
+    newargv[vss.size()] = NULL;
+    
+    return 0;
+}
+
+
+
+void pop_runtime(Runtime &runtime_state, int &argc, char ** &argv, int &i);
+
+void push_runtime(Runtime &runtime_state, int &argc, char ** &argv, int &i)
+{
+    i++;
+    runtime_state.v_argc.push_back(argc);
+    runtime_state.v_argv.push_back(argv);
+    runtime_state.v_i.push_back(i);
+    
+/*    argv = new  char* [10];
+    argv[0] = new char[6]  {'-','i','n','f','o',0};
+    argv[1] = new char[8]  { '-','s','t','a','t','u','s',0};
+    argv[2] = new char[10] {'-','e','n','d','b','a','t','c','h',0};
+    argv[3] = NULL;
+    argc = 3;
+*/
+
+    int res = prepare_argv(argv[i], argc, argv);
+    i = -1;         // increment in mai loop, next command has index 0
+    
+    if (res != 0) pop_runtime(runtime_state, argc, argv, i); 
+}
+
+void pop_runtime(Runtime &runtime_state, int &argc, char ** &argv, int &i)
+{
+    if (runtime_state.v_argv.size() == 0)
+    {
+        std::cout << "Runtime stack is empty!\n"; 
+        return;
+    }
+    
+    for (int k=0; k < argc-1; k++) {delete[] argv[k];}           // destrukce 
+    delete[] argv;
+        
+    argc = runtime_state.v_argc.back();
+    runtime_state.v_argc.pop_back();
+    argv = runtime_state.v_argv.back();
+    runtime_state.v_argv.pop_back();
+    i    = runtime_state.v_i.back();
+    runtime_state.v_i.pop_back();
+    
+}
+
+int main(int argc, char **argv)
+{
+        TDatabase DD;
+        TSOBR    T;
+        TSBP    T_SBP;
+        
+        TSPOL   T_SPOL;
+        THP     T_HP;
+        TOP     T_OP;
+
+        DD.p_sobr = &T;
+        DD.p_spol = &T_SPOL;
+        DD.p_sbp = &T_SBP;
+        DD.p_hp = &T_HP;
+        DD.p_op = &T_OP;
+        
+        Runtime runtime_state;
+
+        if (0)      // first test
+    {
+        TDatabase DD;
+        TSOBR    T;
+        DD.p_sobr = &T;
+               
+        LSOBR    testLSOBR = {12345678901234, 56, 123456, 54321, 4321, 1234567890123, 987654321012, 1234567890.12, 9876543210.12, 34};
+        
+        T.data.push_back(testLSOBR);
+        
+        T.status();
+        
+        testLSOBR.pr();
+        
+        std::string sampleline = "&DSOBR;5840312209;0;658499;286;;6;2860006;728920.22;1037089.6;8";
+        
+        T.import_line(sampleline);
+    }    
+        
+        
+ 
+    
+    if (1)      // 2. test
+    {
+        
+        LSOBR    testLSOBR = {12345678901234, 56, 123456, 54321, 4321, 1234567890123, 987654321012, 1234567890.12, 9876543210.12, 34};
+        
+//        T.data.push_back(testLSOBR);
+        
+ //       T.status();
+        
+ //       testLSOBR.pr();
+        
+ //       std::string sampleline = "&DSOBR;5840312209;0;658499;286;;6;2860006;728920.22;1037089.6;8";
+ //       T.import_line(sampleline);
+        
+        std::ifstream in ("724149-mapa.vfk");
+        if (!in.good()) 
+        { 
+            std::cout << "Error opening file. \n";
+            
+        }
+        else
+          load_file(in, DD);
+        
+        //T.status();
+        //T_SBP.status();
+        DD.info();
+        
+        do {                // trik pro escape pomoci break
+            
+          int res = T_OP.find_parcela("\"284\"", 0);
+          if (res >= 0) T_OP.data[res].pr();
+          else { std::cout << "Parcel 284 not found.\n"; break; }
+          
+          res = T_OP.find_parcela("\"284\"", 1);
+          if (res >= 0) T_OP.data[res].pr();
+          else { std::cout << "Parcel 284 not found.\n";}
+        
+          VEC_idx indi_hp;
+          VEC_idx indi_op;
+          VEC_idx par_typppd;
+          std::vector<long unsigned> par_ids;
+          VEC_s par_cisla;
+          res = DD.find_parcela_neighbors("\"284\"", 0, indi_hp, indi_op, par_ids, par_cisla, par_typppd);
+          if (res >= 0) 
+          {
+              std::cout << "-----------------  Neighbors:  ----------------\n";
+              std::cout << "Neighbor count: " << res <<"\n";
+              std::cout << "Neighbor HPindisize: " << indi_hp.size() <<"  OPindisize: " << indi_op.size() << "\n";
+              for (int k=0; k < indi_op.size(); k++)
+                  std::cout << par_cisla[k] << ":" << par_typppd[k] <<"  ";
+              std::cout << "\n";
+              
+              for (int k=0; k<indi_op.size(); k++) 
+                  std::cout << k << ":\t " << indi_hp[k] << "  | " << indi_op[k] << "\t| " << par_ids[k] << "\t| " << std::setw(8) << std::right << par_cisla[k] << " " << par_typppd[k] << "\n";
+
+              for (int k=0; k<indi_op.size(); k++) T_OP.data[indi_op[k]].pr();
+    
+              std::cout << "-----------------  Results:  ----------------\n";
+
+              int kk = indi_op.size();
+
+              for (int k=0; k<indi_op.size(); k++) 
+                  std::cout << k << ":\t " << indi_hp[k] << "  | " << indi_op[k] << "\t| " << par_ids[k] << "\t| " << std::setw(8) << std::right << par_cisla[k] << " " << par_typppd[k] << "\n";
+           }
+          else 
+            {std::cout << "Parcel neighs' 284 not found.\n"; break;}
+            
+        } while (0);
+}
+    
+/*    if (!global_doc.load_file("724149.xml")) {std::cout << "Error loading default xml file.\n"; return -1;}
+ */
+
+        
+
+        DD.clear();
+        std::cout << "#########################  M A I N   L O O P  ##################################################" << "\n";
+
+        
+        //  DEFAULT FILE
+        std::ifstream vfk_instream ("724149-mapa.vfk");
+
+        if (!vfk_instream.good()) 
+        { 
+            std::cout << "Error opening file. \n";
+            
+        }
+        else
+          load_file(vfk_instream, DD);
+        DD.info();
+
+
+    typedef enum {
+        // implemented
+        CM_NOP, CM_PARC_NEIGHBORS, CM_KU, CM_KUDEFAULT, CM_INFO, CM_CLEAR, CM_PARC_COORD, CM_COORD_MPRINT, CM_CLEAR_CONTEXT, CM_BATCH, CM_ENDBATCH,
+        // not implemented
+        CM_PR, CM_EXP, CM_EXPOO, CM_ADDL,  CM_ADDPC, CM_GO, CM_QUI, CM_VERB, CM_DBGA, CM_HLP, CM_STAT} TCMD;
+
+    std::map<std::string, TCMD> cmdcode = { 
+        // implemented
+        {"-neighbors",  CM_PARC_NEIGHBORS},  {"-k", CM_KUDEFAULT},  {"-ku", CM_KU},  {"-clear", CM_CLEAR}, {"-info", CM_INFO}, {"-debug_arg", CM_DBGA}, 
+        {"-parcel_coord", CM_PARC_COORD}, {"-coord_mprint", CM_COORD_MPRINT}, {"-clear_context", CM_CLEAR_CONTEXT}, {"-batch", CM_BATCH}, {"-endbatch", CM_ENDBATCH},
+        // not implemented
+        {"-pr", CM_PR}, {"-exp", CM_EXP}, {"-expoo", CM_EXPOO}, {"-addlist",CM_ADDL},
+        {"-addpc", CM_ADDPC}, {"-go", CM_GO}, {"-quiet", CM_QUI}, {"-verb", CM_VERB}, 
+        {"-help", CM_HLP}, {"--help", CM_HLP}, {"-status", CM_STAT} };
+
+    std::map<TCMD, int> cmd_argc = { 
+        // implemented
+        {CM_PARC_NEIGHBORS, 1}, {CM_KU,1}, {CM_KUDEFAULT,0}, {CM_INFO,0}, {CM_CLEAR, 0}, {CM_INFO, 0}, {CM_PARC_COORD, 2}, {CM_COORD_MPRINT, 1}, {CM_CLEAR_CONTEXT,0},
+        {CM_BATCH, 1}, { CM_ENDBATCH, 0}
+        // not implemented
+    };
+    
+    int tmpint;
+    int quiet = 0,
+        debug_arg = 0;
+    
+    int arg_waiting = 0;
+    for(int i = 0; i < argc; i++)
+    {
+        if (cmdcode[argv[i]] == CM_DBGA) debug_arg = 1;
+        debug_arg && std::cout << std::left << std::setw(4) << i << ":  " << std::left << std::setw(12) << argv[i] << "  ";
+        
+        if (arg_waiting == 0) 
+        {
+            arg_waiting = cmd_argc[cmdcode[argv[i]]];
+            debug_arg && std::cout << "OPCODE: " << cmdcode[argv[i]] << (cmdcode[argv[i]] ? "  OK" : "  N/A") << "\n";
+        }
+        else
+        {
+            debug_arg && std::cout << "ARG: " << arg_waiting << "\n";
+            arg_waiting--;
+        }
+        if (cmdcode[argv[i]] == CM_QUI) quiet = 1;
+    }
+    debug_arg && std::cout << "\n";
+    
+    int i = 1;
+    //----------------------  context ----------------------------
+    BoundaryList bdList;
+    //------------------ end of context --------------------------
+    
+    while(i < argc)
+    {
+        // for integrity of argv
+        if (argv[i] == NULL) std::cerr << "Internal Error / argv! \n";
+//todo check argc
+        TCMD current_cmd = cmdcode[argv[i]]; 
+        auto chkarg  = [&i,&argc](int m) -> bool { if (i+m >= argc) {std::cout << "Arg is missing.\n"; return 0;}; return 1;} ;
+        auto chkargc = [&i,&argc,&cmd_argc, &current_cmd]() -> bool { if (i+cmd_argc[current_cmd] >= argc) {std::cout << "CMD " << current_cmd << ": Arg is missing.\n"; return 0;}; return 1;} ;
+
+
+        VEC_idx tmp_indi_hp;
+        VEC_idx tmp_indi_op;
+        VEC_idx tmp_par_typppd;
+        std::vector<long unsigned> tmp_par_ids;
+        VEC_s tmp_par_cisla;
+        int res;
+
+        quiet || std::cout << i << ":  " << argv[i] << "  \t";
+        quiet || std::cout << "===== PROCESSING OPCODE: " << cmdcode[argv[i]] << (cmdcode[argv[i]] ? "  OK" : "  N/A") << "\n";
+
+        switch(current_cmd)
+        {
+            case CM_PARC_NEIGHBORS:
+                if (!chkargc()) break;
+                tmpint = atoi(argv[i+2]);
+                res = DD.find_parcela_neighbors(quote_string(argv[i+1]), tmpint, tmp_indi_hp, tmp_indi_op, tmp_par_ids, tmp_par_cisla, tmp_par_typppd);
+              std::cout << "-----------------  Neighbors:  ----------------\n";
+              std::cout << "Neighbor count: " << res <<"\n";
+              std::cout << "Neighbor HPindisize: " << tmp_indi_hp.size() <<"  OPindisize: " << tmp_indi_op.size() << "\n";
+
+                DD.p_op -> print_neighbors(tmp_indi_op, tmp_par_ids, tmp_par_cisla, tmp_par_typppd);
+                i += cmd_argc[current_cmd];
+                break;
+ 
+            case CM_KUDEFAULT:
+                vfk_instream.close();
+                vfk_instream.open("724149-mapa.vfk");
+                if (!vfk_instream.good()) 
+                { 
+                    std::cout << "Error opening default file. \n";
+                }
+                else
+                    load_file(vfk_instream, DD);        
+                DD.info();
+                break;
+                
+            case CM_KU:
+                if (!chkargc()) break;        
+                vfk_instream.close();
+                vfk_instream.open(argv[i+1]);
+                if (!vfk_instream.good()) 
+                { 
+                    std::cout << "Error opening file '" << argv[i+1] << "'.\n";
+                }
+                else
+                    load_file(vfk_instream, DD);
+                DD.info();
+                i++;
+                break;
+
+            case CM_CLEAR:
+                DD.clear();
+                DD.info();
+                break;
+
+            case CM_CLEAR_CONTEXT:
+                bdList.clear();
+                break;
+                
+            case CM_INFO:
+                DD.info();
+                break;
+
+           case CM_PARC_COORD:
+                if (!chkargc()) break;
+                tmpint = atoi(argv[i+2]);
+                res = DD.parcela_coord(quote_string(argv[i+1]), tmpint, bdList);
+                DD.print_parcela_coord(bdList);
+                i += cmd_argc[current_cmd];
+                break;
+ 
+           case CM_COORD_MPRINT:
+                if (!chkargc()) break;
+                bdList.mprint(argv[i+1]);
+                i += cmd_argc[current_cmd];
+                break;
+           case CM_PR:
+                if (!chkarg(1)) break;
+                tmpint = atoi(argv[i+1]);
+//                if (tmpint < global_set.parc.size())
+//                  global_set.parc[tmpint].pr();
+//                else
+  //                  std::cout << "Index " << tmpint << " of global_set not found [size=" <<  global_set.parc.size() << "].\n";
+                i++;
+                break;
+            case CM_EXPOO:
+ //               global_set.export_set_octave();
+                break;
+                
+            case CM_ADDPC:
+                if (!chkarg(1)) break;
+   //             global_set.addpc(argv[i+1]);
+                i++;
+                break;
+
+            case CM_ADDL:
+                while ( (i+1 < argc) && argv[i+1][0] != '-')
+                {
+     //               global_set.addpc(argv[i+1]);
+                    i++;
+                }
+                break;
+            case CM_GO:
+                if (!chkarg(1)) break;
+       //         go(argv[i+1]);
+                i++;
+                break;
+            case CM_QUI:
+                quiet = 1;
+                break;
+            case CM_BATCH:
+                if (!chkarg(1)) break;
+                push_runtime(runtime_state, argc, argv, i);
+                break;
+            case CM_ENDBATCH:
+                DEBPR("i=",i)
+                pop_runtime(runtime_state, argc, argv, i);
+                DEBPR("i=",i)
+                break;
+            case CM_VERB:
+                quiet = 0;
+                break;
+                
+            case CM_HLP:
+         //       help(cmdcode);
+                break;
+            case CM_DBGA:
+         //       help(cmdcode);
+                break;
+
+            default:
+                std::cout << "Unknown command: " << argv[i] << "\n";
+                break;
+        }
+        i++;        
+    }
+    
+    
+    return 0;
+}
